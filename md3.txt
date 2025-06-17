@@ -1,0 +1,515 @@
+УСТАНОВКА ЗАВИСИМОСТЕЙ И СОЗДАНИЕ ПРОЕКТА
+dotnet add package Avalonia.Xaml.Behaviors --version 11.2.0.14
+dotnet add package MessageBox.Avalonia --version 3.2.0
+
+НАПИСАНИЕ ПРОГРАММЫ
+ValidationHelper.cs:
+using System.Text.RegularExpressions;
+
+public class ValidationHelper
+    {
+        public static bool IsValidInn(string? inn)
+        {
+            if (string.IsNullOrWhiteSpace(inn)) return false;
+            return Regex.IsMatch(inn, @"^\d{10}$|^\d{12}$");
+        }
+
+
+        public static bool IsValidEmail(string? email)
+        {
+            if (string.IsNullOrWhiteSpace(email)) return false;
+            return Regex.IsMatch(email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$");
+        }
+
+
+        public static bool IsValidPhoneNumber(string? phone)
+        {
+            if (string.IsNullOrWhiteSpace(phone)) return false;
+            return Regex.IsMatch(phone, @"^\+?[78]\s?\(?\d{3}\)?\s?\d{3}[-\s]?\d{2}[-\s]?\d{2}$");
+        }
+
+
+        public static bool IsValidRating(int? rating)
+        {
+            return rating is >= 0 and <= 100;
+        }
+    }
+
+Partner.cs:
+using System.Linq;
+namespace DemoApp.Models
+{
+    public class Partner : Entities.Partner
+    {
+        public Entities.Partner _partner { get; set; }
+        public Partner(Entities.Partner partner)
+        {
+            _partner = partner;
+        }
+        public string? PartnerTypeDescription => _partner.PartnerTypeNavigation?.PartnerTypeName;
+        public string ContactInfo => $"{_partner.DirectorPhone} | {_partner.DirectorMail}";
+        public string RatingDisplay => $"Рейтинг: {_partner.PartnerRating ?? 0}";
+        public int TotalProductsSold => _partner.Sales?.Sum(s => s.ProductCount) ?? 0;
+        public decimal Discount => CalculatePartnerDiscount(TotalProductsSold);
+        public string DiscountDisplay => $"Скидка: {Discount:P0}";
+        public static decimal CalculatePartnerDiscount(int totalProductsSold)
+        {
+            return totalProductsSold switch
+            {
+                < 10000 => 0,
+                < 50000 => 0.05m,
+                < 300000 => 0.10m,
+                _ => 0.15m
+            };
+        }
+    }
+}
+
+Partner.cs (Entities):
+using System;
+using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
+namespace DemoApp.Entities;
+
+public partial class Partner
+{
+    [Key]
+    [DatabaseGenerated(DatabaseGeneratedOption.Identity)]
+    public int? PartnerId { get; set; }
+
+    public string? PartnerName { get; set; }
+
+    public string? Director { get; set; }
+
+    public string? DirectorMail { get; set; }
+
+    public string? DirectorPhone { get; set; }
+
+    public string? PartnerLegalAddress { get; set; }
+
+    public string? PartnerInn { get; set; }
+
+    public int? PartnerRating { get; set; }
+
+    public int? PartnerType { get; set; }
+
+    public virtual PartnerType? PartnerTypeNavigation { get; set; }
+
+    public virtual ICollection<Sale> Sales { get; set; } = new List<Sale>();
+}
+
+EditPartnerViewModel.cs:
+using System.Collections.ObjectModel;
+using System.Linq;
+using System.Threading.Tasks;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using DemoApp.Entities;
+using MsBox.Avalonia;
+using MsBox.Avalonia.Enums;
+
+namespace DemoApp.ViewModels
+{
+    public partial class EditPartnerViewModel : ViewModelBase
+    {
+        private readonly DbDemoFdbContext _context;
+        private readonly PartnersViewModel? _parentViewModel;
+        private readonly Partner _partnerEntity;
+
+        [ObservableProperty]
+        private string? _partnerName;
+
+
+        [ObservableProperty]
+        private string? _partnerInn;
+
+
+        [ObservableProperty]
+        private string? _director;
+
+
+        [ObservableProperty]
+        private string? _directorPhone;
+
+
+        [ObservableProperty]
+        private string? _directorMail;
+
+
+        [ObservableProperty]
+        private int? _partnerRating;
+
+
+        [ObservableProperty]
+        private int? _selectedPartnerType;
+
+
+        [ObservableProperty]
+        private ObservableCollection<PartnerType> _partnerTypes = new();
+
+
+        [ObservableProperty]
+        private string? _errorMessage;
+
+        public EditPartnerViewModel(DbDemoFdbContext context, Partner? partner = null, PartnersViewModel? parentViewModel = null)
+        {
+            _context = context;
+            _parentViewModel = parentViewModel;
+            _partnerEntity = partner ?? new Partner();
+
+
+            LoadPartnerTypes();
+            LoadPartnerData();
+        }
+
+        private void LoadPartnerTypes()
+        {
+            var types = _context.PartnerTypes.ToList();
+            PartnerTypes = new ObservableCollection<PartnerType>(types);
+        }
+
+
+        private void LoadPartnerData()
+        {
+            PartnerName = _partnerEntity.PartnerName;
+            PartnerInn = _partnerEntity.PartnerInn;
+            Director = _partnerEntity.Director;
+            DirectorPhone = _partnerEntity.DirectorPhone;
+            DirectorMail = _partnerEntity.DirectorMail;
+            PartnerRating = _partnerEntity.PartnerRating;
+            SelectedPartnerType = _partnerEntity.PartnerType;
+        }
+
+        private bool ValidateData()
+        {
+            if (string.IsNullOrWhiteSpace(PartnerName))
+            {
+                ErrorMessage = "Название партнера обязательно для заполнения";
+                return false;
+            }
+
+
+            if (!ValidationHelper.IsValidInn(PartnerInn))
+            {
+                ErrorMessage = "ИНН должен содержать 10 или 12 цифр";
+                return false;
+            }
+
+
+            if (string.IsNullOrWhiteSpace(Director))
+            {
+                ErrorMessage = "Имя директора обязательно для заполнения";
+                return false;
+            }
+
+
+            if (!ValidationHelper.IsValidPhoneNumber(DirectorPhone))
+            {
+                ErrorMessage = "Неверный формат номера телефона. Пример: +7(999)999-99-99";
+                return false;
+            }
+
+
+            if (!ValidationHelper.IsValidEmail(DirectorMail))
+            {
+                ErrorMessage = "Неверный формат электронной почты";
+                return false;
+            }
+
+
+            if (!ValidationHelper.IsValidRating(PartnerRating))
+            {
+                ErrorMessage = "Рейтинг должен быть от 0 до 100";
+                return false;
+            }
+
+
+            if (SelectedPartnerType == null)
+            {
+                ErrorMessage = "Выберите тип партнера";
+                return false;
+            }
+
+
+            ErrorMessage = null;
+            return true;
+        }
+
+        [RelayCommand]
+        private async Task SaveAsync()
+        {
+            if (!ValidateData()) {
+                 var box = MessageBoxManager
+            .GetMessageBoxStandard("Error", ErrorMessage,
+                ButtonEnum.Ok);
+
+        var result = await box.ShowAsync();
+                return;}
+
+            _partnerEntity.PartnerName = PartnerName;
+            _partnerEntity.PartnerInn = PartnerInn;
+            _partnerEntity.Director = Director;
+            _partnerEntity.DirectorPhone = DirectorPhone;
+            _partnerEntity.DirectorMail = DirectorMail;
+            _partnerEntity.PartnerRating = PartnerRating;
+            _partnerEntity.PartnerType = SelectedPartnerType;
+
+            if (_partnerEntity.PartnerId == 0)
+            {
+            _context.Partners.Add(_partnerEntity); // новая запись
+            }
+            else
+            {
+            _context.Partners.Update(_partnerEntity); // обновление существующей
+            }
+
+
+            _context.SaveChanges();
+            _parentViewModel?.LoadPartners();
+            Cancel();
+        }
+
+
+        [RelayCommand]
+        private void Cancel()
+        {
+            _parentViewModel?._mainViewModel.ShowPartnersList();
+        }
+    }
+}
+
+MainWindowViewModel.cs:
+namespace DemoApp.ViewModels;
+using Avalonia.Controls;
+using CommunityToolkit.Mvvm.ComponentModel;
+using DemoApp.Entities;
+using DemoApp.Views;
+
+public partial class MainWindowViewModel : ViewModelBase
+{
+    [ObservableProperty]
+    private Control? _content;
+    private readonly DbDemoFdbContext _context;
+    public void ShowContent(Control content)
+    {
+        Content = content;
+    }
+    public void ShowPartnersList()
+    {
+        Content = new PartnersView
+        {
+            DataContext = new PartnersViewModel(_context, this)
+        };
+    }
+    public MainWindowViewModel()
+    {
+        _context = new DbDemoFdbContext();
+        ShowPartnersList();
+    }
+
+    public void ShowEditPartner(EditPartnerView editControl)
+    {
+        Content = editControl;
+    }
+}
+
+PartnersViewModel.cs:
+using System.Collections.ObjectModel;
+using System.Linq;
+using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using DemoApp.Entities;
+using DemoApp.Views;
+using Microsoft.EntityFrameworkCore;
+
+namespace DemoApp.ViewModels
+{
+    public partial class PartnersViewModel : ObservableObject
+    {
+        private readonly DbDemoFdbContext _context;
+        internal readonly MainWindowViewModel _mainViewModel;
+
+
+        [ObservableProperty]
+        private ObservableCollection<Models.Partner> _partners = new();
+
+
+        [ObservableProperty]
+        private Models.Partner? _selectedPartner;
+
+
+        public PartnersViewModel(DbDemoFdbContext context, MainWindowViewModel mainViewModel)
+        {
+            _context = context;
+            _mainViewModel = mainViewModel;
+            LoadPartners();
+        }
+
+
+        public void LoadPartners()
+        {
+            var entities = _context.Partners.Include(p => p.Sales).Include(p => p.PartnerTypeNavigation).ToList();
+            Partners = new ObservableCollection<Models.Partner>(
+                entities.Select(e => new Models.Partner(e))
+            );
+        }
+
+
+        [RelayCommand]
+        private void EditPartner()
+        {
+            if (SelectedPartner == null) return;
+        var partnerEntity = _context.Partners.Find(SelectedPartner._partner.PartnerId);
+        if (partnerEntity == null) return;
+
+
+        var viewModel = new EditPartnerViewModel(_context, partnerEntity, this);
+        var editControl = new EditPartnerView { DataContext = viewModel };
+        _mainViewModel.ShowEditPartner(editControl);
+        }
+
+
+        [RelayCommand]
+        private void AddPartner()
+        {
+            var viewModel = new EditPartnerViewModel(_context, parentViewModel: this);
+        var editControl = new EditPartnerView { DataContext = viewModel };
+        _mainViewModel.ShowEditPartner(editControl);
+        }
+
+
+        [RelayCommand]
+        private void ViewSalesHistory(Partner? partner)
+        {
+            //история продаж
+        }
+    }
+}
+
+EditPartnerView.axaml:
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="DemoApp.Views.EditPartnerView"
+             xmlns:vm="using:DemoApp.ViewModels"
+             x:DataType="vm:EditPartnerViewModel">
+  <Grid Margin="20">
+    <StackPanel Spacing="10">
+      <TextBlock Text="Редактирование партнера" FontSize="24" FontWeight="Bold" />
+       <TextBlock Text="{Binding ErrorMessage}"
+                     Foreground="Red"
+                     IsVisible="{Binding ErrorMessage, Converter={x:Static ObjectConverters.IsNotNull}}"
+                     TextWrapping="Wrap"/>
+                     <Grid ColumnDefinitions="150,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto">
+      </Grid>
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Button Content="Сохранить" Command="{Binding SaveCommand}" />
+        <Button Content="Отмена" Command="{Binding CancelCommand}" />
+      </StackPanel>
+      <TextBlock Grid.Row="0" Grid.Column="0" Text="Название:" />
+        <TextBox Grid.Row="0" Grid.Column="1" Text="{Binding PartnerName}" />
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="ИНН:" />
+        <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding PartnerInn}" />
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Директор:" />
+        <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding Director}" />
+        <TextBlock Grid.Row="3" Grid.Column="0" Text="Телефон:" />
+        <MaskedTextBox Grid.Row="3" Grid.Column="1" Text="{Binding DirectorPhone}"
+          Mask="+7 (000) 000 0000" />
+        <TextBlock Grid.Row="4" Grid.Column="0" Text="Email:" />
+        <TextBox Grid.Row="4" Grid.Column="1" Text="{Binding DirectorMail}"
+          Watermark="example@domain.com" />
+        <TextBlock Grid.Row="5" Grid.Column="0" Text="Рейтинг:" />
+        <NumericUpDown Grid.Row="5" Grid.Column="1" Value="{Binding PartnerRating}"
+          Minimum="0" Maximum="100" />
+        <TextBlock Grid.Row="6" Grid.Column="0" Text="Тип партнера:" />
+        <ComboBox Grid.Row="6" Grid.Column="1"
+          ItemsSource="{Binding PartnerTypes}"
+          SelectedValue="{Binding SelectedPartnerType}"
+          SelectedValueBinding="{Binding PartnerTypeId}"
+          DisplayMemberBinding="{Binding PartnerTypeName}" />
+
+    </StackPanel>
+  </Grid>
+</UserControl>
+
+EditPartnerView.axaml.cs:
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
+
+namespace DemoApp.Views;
+
+public partial class EditPartnerView : UserControl
+{
+    public EditPartnerView()
+    {
+        InitializeComponent();
+    }
+}
+
+PartnersView.axaml:
+<UserControl xmlns="https://github.com/avaloniaui"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+  xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+  xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+  mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+  x:Class="DemoApp.Views.PartnersView"
+  xmlns:vm="using:DemoApp.ViewModels"
+  x:DataType="vm:PartnersViewModel">
+  <Grid Margin="20">
+    <StackPanel Spacing="10">
+      <TextBlock Text="Список партнеров" FontSize="24" FontWeight="Bold" />
+      <StackPanel Orientation="Horizontal" Spacing="10">
+        <Button Content="Добавить партнера" Command="{Binding AddPartnerCommand}" />
+        <Button Content="Редактировать" Command="{Binding EditPartnerCommand}" />
+      </StackPanel>
+      <ListBox ItemsSource="{Binding Partners}" SelectedItem="{Binding SelectedPartner}"
+        MaxHeight="800">
+        <ListBox.ItemTemplate>
+          <DataTemplate>
+            <StackPanel Orientation="Horizontal" Margin="5" HorizontalAlignment="Left">
+              <StackPanel Orientation="Vertical" Margin="5" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                  <TextBlock Text="{Binding PartnerTypeDescription}" TextWrapping="Wrap" />
+                  <TextBlock Text=" |  " TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding _partner.PartnerName}" TextWrapping="Wrap" Width="250" />
+                </StackPanel>
+                <TextBlock Text="{Binding _partner.Director}" TextWrapping="Wrap" Width="250" HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding _partner.DirectorPhone}" TextWrapping="Wrap" Width="250" HorizontalAlignment="Left" />
+                <TextBlock Text="{Binding RatingDisplay}" TextWrapping="Wrap" Width="250" HorizontalAlignment="Left" />
+              </StackPanel>
+              <StackPanel Orientation="Vertical" Spacing="10">
+                <TextBlock Text="{Binding DiscountDisplay}" TextWrapping="Wrap" Width="150" />
+                <Button Content="История продаж" />
+              </StackPanel>
+            </StackPanel>
+          </DataTemplate>
+        </ListBox.ItemTemplate>
+        <Interaction.Behaviors>
+          <EventTriggerBehavior EventName="SelectionChanged">
+            <InvokeCommandAction Command="{Binding EditPartnerCommand}" CommandParameter="{Binding SelectedPartner}"/>
+            </EventTriggerBehavior>
+          </Interaction.Behaviors>
+      </ListBox>
+    </StackPanel>
+  </Grid>
+</UserControl>
+
+PartnersView.axaml.cs:
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Markup.Xaml;
+
+namespace DemoApp.Views;
+
+public partial class PartnersView : UserControl
+{
+    public PartnersView()
+    {
+        InitializeComponent();
+    }
+}
